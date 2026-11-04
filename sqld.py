@@ -29,7 +29,7 @@ STATIC = re.compile(r'\.(?:jpg|jpeg|png|gif|svg|webp|ico|css|js|woff2?|ttf|pdf|z
 TRACKING = {'gclid', 'fbclid', 'msclkid', '_ga', 'ref', 'referrer'}
 
 
-def candidate(raw, suffix):
+def candidate(raw, suffix, page_type='any'):
     try:
         if len(raw) > 16384 or any(ord(c) < 32 or ord(c) == 127 for c in raw):
             return None
@@ -40,6 +40,8 @@ def candidate(raw, suffix):
         if not host.endswith('.' + suffix) or not all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', x) for x in host.split('.')):
             return None
         port = p.port
+        if page_type == 'php' and not unquote(p.path).lower().endswith('.php'):
+            return None
         pairs = parse_qsl(p.query, keep_blank_values=True, max_num_fields=200)
         if not pairs or STATIC.search(unquote(p.path)) or any(SECRET.search(k) for k, _ in pairs):
             return None
@@ -67,7 +69,7 @@ def input_urls(path):
                 yield line
 
 
-def build_query(suffix, limit, crawl, database='ccindex', table='ccindex'):
+def build_query(suffix, limit, crawl, database='ccindex', table='ccindex', page_type='php'):
     suffix = suffix_value(suffix)
     limit = limit_value(limit)
     if not re.fullmatch(r'CC-MAIN-\d{4}-\d{2}', crawl or ''):
@@ -75,6 +77,9 @@ def build_query(suffix, limit, crawl, database='ccindex', table='ccindex'):
     for name in (database, table):
         if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name):
             raise ValueError('Database/table names must be simple SQL identifiers')
+    if page_type not in {'php', 'any'}:
+        raise ValueError('Page type must be php or any')
+    page_filter = "AND ends_with(lower(url_path), '.php')" if page_type == 'php' else ''
     return f'''SELECT url FROM (
   SELECT url, url_host_name,
          row_number() OVER (PARTITION BY url_host_name ORDER BY url) AS rn
@@ -84,6 +89,7 @@ def build_query(suffix, limit, crawl, database='ccindex', table='ccindex'):
     AND ends_with(lower(url_host_name), '.{suffix}')
     AND url_protocol IN ('http', 'https') AND fetch_status = 200
     AND url_query IS NOT NULL AND url_query <> ''
+    {page_filter}
 ) WHERE rn <= 3
 ORDER BY url_host_name, rn
 LIMIT {limit * 9}'''
@@ -124,16 +130,16 @@ def athena_urls(client, query, output, workgroup, timeout):
                 yield data[0]['VarCharValue']
 
 
-def collect(urls, suffix, limit):
+def collect(urls, suffix, limit, page_type='any'):
     found = {}
     for raw in urls:
-        item = candidate(raw, suffix)
+        item = candidate(raw, suffix, page_type)
         if item and item['hostname'] not in found:
             found[item['hostname']] = item
     return list(found.values())[:limit]
 
 
-def save(items, output, suffix, limit, source):
+def save(items, output, suffix, limit, source, page_type='any'):
     output.mkdir(parents=True, exist_ok=False)
     for filename, key in [('urls.txt', 'url'), ('sites.txt', 'hostname')]:
         (output / filename).write_text(''.join(x[key] + '\n' for x in items), encoding='utf-8')
@@ -142,7 +148,7 @@ def save(items, output, suffix, limit, source):
         writer.writeheader()
         writer.writerows({**x, 'parameters': ','.join(x['parameters'])} for x in items)
     summary = {'project': 'SQLD', 'suffix': '.' + suffix, 'requested': limit, 'returned': len(items),
-        'source': source, 'created_utc': datetime.now(timezone.utc).isoformat(),
+        'source': source, 'page_type': page_type, 'created_utc': datetime.now(timezone.utc).isoformat(),
         'notice': 'Query parameters do not prove SQL injection. No target sites were contacted.'}
     (output / 'summary.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
 
@@ -152,6 +158,8 @@ def main():
     parser.add_argument('--suffix', help='.ae, .sa, .co.uk, etc.')
     parser.add_argument('--limit', type=int, help='1–10000; interactive default: 1000')
     parser.add_argument('--input', type=Path, help='Local URL list or JSONL with a url field')
+    parser.add_argument('--page-type', choices=['php', 'any'], default='php',
+        help='php: pages such as item.php?id=1 (default); any: all page paths with GET parameters')
     parser.add_argument('--crawl', help='Existing Common Crawl partition')
     parser.add_argument('--print-query', action='store_true', help='Print SQL without AWS requests')
     parser.add_argument('--s3-output')
@@ -172,7 +180,7 @@ def main():
         if args.input and args.print_query:
             raise ValueError('--input and --print-query cannot be combined')
         if args.print_query:
-            print(build_query(suffix, limit, args.crawl, args.database, args.table))
+            print(build_query(suffix, limit, args.crawl, args.database, args.table, args.page_type))
             return
         if output.exists():
             raise ValueError('Output directory already exists; choose a new path')
@@ -180,7 +188,7 @@ def main():
             urls = input_urls(args.input)
             source = 'local file'
         else:
-            query = build_query(suffix, limit, args.crawl, args.database, args.table)
+            query = build_query(suffix, limit, args.crawl, args.database, args.table, args.page_type)
             if not args.s3_output or not re.fullmatch(r's3://[^/]+/.+', args.s3_output):
                 raise ValueError('Live collection requires --s3-output s3://BUCKET/PREFIX/')
             try:
@@ -191,8 +199,8 @@ def main():
             client = boto3.Session(profile_name=args.profile, region_name=args.region).client('athena')
             urls = athena_urls(client, query, args.s3_output, args.workgroup, args.timeout)
             source = f'Common Crawl {args.crawl}'
-        items = collect(urls, suffix, limit)
-        save(items, output, suffix, limit, source)
+        items = collect(urls, suffix, limit, args.page_type)
+        save(items, output, suffix, limit, source, args.page_type)
         print(f'Saved {len(items)}/{limit} unique hostnames to {output.resolve()}')
         print('These are review candidates, not confirmed vulnerabilities.')
     except (ValueError, OSError, RuntimeError, EOFError) as exc:

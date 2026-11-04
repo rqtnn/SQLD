@@ -1,6 +1,10 @@
 # SQLD
 
-Collect archived URLs with GET query parameters by hostname suffix, such as `.ae`, `.sa`, or `.co.uk`. Default: 1,000 different hostnames; maximum: 10,000. One URL is saved per hostname. Subdomains count separately.
+Search Common Crawl for archived PHP pages with GET query parameters by hostname suffix, such as `.ae`, `.sa`, or `.co.uk`. For example, selecting `.ae` finds patterns such as `https://shop.example.ae/item.php?id=123` or `https://blog.example.ae/search.php?q=hello`. Default: 1,000 different hostnames; maximum: 10,000. One URL is saved per hostname. Subdomains count separately.
+
+The default `--page-type php` requires a path ending in `.php` plus a useful query parameter (`id`, `q`, `category`, or other names). Use `--page-type any` to also include paths such as `/product?id=123`, `.aspx`, and `.asp`. Neither a PHP extension nor an `id` parameter is evidence of a vulnerability.
+
+Automatic search uses AWS Athena and requires the one-time setup below. Running with `--input` only processes your existing file; it does not search the web.
 
 SQLD prepares candidates for manual review. Query parameters do not establish SQL injection, a database, or current availability. SQLD does not contact target websites, send attack payloads, or scan vulnerabilities. Only scan assets you own or have permission to test. A suffix does not establish a website's country or hosting location.
 

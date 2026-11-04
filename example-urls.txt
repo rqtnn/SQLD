@@ -1,7 +1,7 @@
-https://shop.example.ae/product?id=123
-https://shop.example.ae/catalog?category=7
-https://blog.example.ae/search?q=hello#top
-https://portal.example.sa/item?id=12
+https://shop.example.ae/product.php?id=123
+https://shop.example.ae/catalog.php?category=7
+https://blog.example.ae/search.php?q=hello#top
+https://portal.example.sa/item.php?id=12
 https://static.example.ae/image.png?width=100
 https://account.example.ae/profile?session=example
 https://news.example.ae/?utm_source=example
