@@ -4,6 +4,20 @@ import sqld
 
 
 class Filters(unittest.TestCase):
+    def test_php_discovery_filter(self):
+        urls = ['https://shop.example.ae/item.php?id=1',
+                'https://shop.example.ae/item.php?id=2',
+                'https://blog.example.ae/SEARCH.PHP?q=test',
+                'https://other.example.ae/item?id=3',
+                'https://wrong.example.sa/item.php?id=4',
+                'https://tracking.example.ae/item.php?utm_source=test',
+                'https://path.example.ae/item.php/extra?id=1']
+        rows = sqld.collect(urls, 'ae', 1000, 'php')
+        self.assertEqual([r['hostname'] for r in rows], ['shop.example.ae', 'blog.example.ae'])
+        self.assertEqual(len(sqld.collect(urls, 'ae', 1000, 'any')), 4)
+        self.assertIn("ends_with(lower(url_path), '.php')", sqld.build_query('ae', 1000, 'CC-MAIN-2025-33'))
+        self.assertNotIn("ends_with(lower(url_path), '.php')", sqld.build_query('ae', 1000, 'CC-MAIN-2025-33', page_type='any'))
+
     def test_suffix_boundary(self):
         self.assertIsNone(sqld.candidate('https://fakeae/?id=1', 'ae'))
         self.assertIsNone(sqld.candidate('https://example.ae.evil.com/?id=1', 'ae'))
