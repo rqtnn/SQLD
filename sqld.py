@@ -157,6 +157,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', choices=['random', 'commoncrawl'], default='random',
         help='random: sample domains without AWS (default); commoncrawl: archived URL candidates')
+    parser.add_argument('--sources', help='Random mode: all or tranco,majestic,umbrella,openpagerank')
     parser.add_argument('--refresh', action='store_true', help='Refresh the cached Tranco domain list')
     parser.add_argument('--suffix', help='.ae, .sa, .co.uk, etc.')
     parser.add_argument('--limit', '--count', type=int, help='Interactive default: 1000; random max: 100000; commoncrawl max: 10000')
@@ -180,12 +181,14 @@ def main():
         from random_suffix_sites import main as random_main
         random_args = []
         for flag, value in [('--suffix', args.suffix), ('--count', args.limit),
-                            ('--input', args.input), ('--output', args.output)]:
+                            ('--input', args.input), ('--output', args.output), ('--sources', args.sources)]:
             if value is not None:
                 random_args.extend([flag, str(value)])
         if args.refresh:
             random_args.append('--refresh')
         return random_main(random_args)
+    if args.sources:
+        parser.error('--sources is only available with --source random')
     if args.refresh:
         parser.error('--refresh is only available with --source random')
     try:
@@ -228,3 +231,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
