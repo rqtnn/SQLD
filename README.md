@@ -1,6 +1,6 @@
 # SQLD — random sites by domain suffix
 
-Extract a random sample of known domains ending in a suffix such as `.ae`, `.sa`, or `.co.uk`. The default mode uses the public Tranco top-one-million list: **no AWS account, API keys, pip dependencies, or target requests**. Python 3.10+.
+Extract a random sample of known domains ending in a suffix such as `.ae`, `.sa`, or `.co.uk`. The default mode merges four public domain lists: **no AWS account, API keys, pip dependencies, or target requests**. Python 3.10+.
 
 ## Quick start
 
@@ -25,7 +25,27 @@ The standalone attached-script entry point is also available:
 python3 random_suffix_sites.py --suffix .ae --count 1000
 ```
 
-The default list is downloaded once from https://tranco-list.eu/top-1m.csv.zip and cached in `~/.cache/random-suffix-sites/`. Use `--refresh` to download it again. A local `--input` works offline and accepts TXT, rank/domain CSV, or ZIP containing TXT/CSV. URL inputs are reduced to hostnames. Matching respects label boundaries, removes duplicates, and samples without replacement.
+## Domain sources
+
+All four sources run by default, with duplicate hostnames removed across lists:
+
+| Name for --sources | Provider | List size |
+| --- | --- | --- |
+| tranco | [Tranco](https://tranco-list.eu/) | Top 1 million |
+| majestic | [Majestic Million](https://majestic.com/reports/majestic-million) | Top 1 million |
+| umbrella | [Cisco Umbrella](https://s3-us-west-1.amazonaws.com/umbrella-static/index.html) | Top 1 million domains/subdomains |
+| openpagerank | [Open Page Rank](https://keywordseverywhere.com/openpagerank/top-domains) | Top 10 million |
+
+Majestic data is licensed under [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/); source attribution is retained in the summary. Other lists remain subject to their providers' terms.
+
+```bash
+python3 sqld.py --suffix .ir --count 100000 --sources all
+python3 sqld.py --suffix .ir --count 100000 --sources tranco,majestic,umbrella
+```
+
+First run downloads can be large, especially Majestic and Open Page Rank. Downloads are cached in `~/.cache/random-suffix-sites/`; use `--refresh` to download them again. Sources run sequentially and print their matching count and how many new unique hostnames they add. A failed source produces a visible warning; successful sources still produce results, with `partial_results: true` and per-source errors in `summary.json`. If all sources fail, the command fails. Caches are replaced only after validation; a failed refresh preserves the earlier file but does not silently use it for that run.
+
+A local `--input` uses only that file and works offline. It accepts TXT, CSV with a Domain column or rank/domain rows, and ZIP containing TXT/CSV. URL inputs are reduced to hostnames. Subdomains count separately. Neither popularity lists nor their union guarantee coverage of all registered domains.
 
 Results are saved in a new `results/suffix-*` folder:
 
@@ -115,3 +135,4 @@ Tests use fictional URLs and mocked Athena responses. Live AWS collection is not
 
 - [Common Crawl URL Index and Athena setup](https://commoncrawl.org/url-index)
 - [Official flat table schema](https://github.com/commoncrawl/cc-index-table/blob/master/src/sql/athena/cc-index-create-table-flat.sql)
+
