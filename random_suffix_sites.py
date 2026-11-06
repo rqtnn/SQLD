@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Randomly sample known domains matching a suffix (no target contact).
 
-Default source: Tranco's public top-1-million domains list, downloaded once
-and cached locally. This is NOT a comprehensive index of Internet domains.
+Sources: Tranco, Majestic, Cisco Umbrella, and Open Page Rank, cached locally. This is NOT a comprehensive index of Internet domains.
 """
 
 import argparse
@@ -54,15 +53,39 @@ def clean_domain(value):
     return value
 
 
-def iter_rows(content):
-    """Accept Tranco rank,domain CSV or a simple one-domain-per-line list."""
-    for row in csv.reader(io.StringIO(content)):
+SOURCES = {
+    'tranco': ('https://tranco-list.eu/top-1m.csv.zip', 'tranco-top-1m.csv.zip'),
+    'majestic': ('https://downloads.majestic.com/majestic_million.csv', 'majestic.csv'),
+    'umbrella': ('https://s3-us-west-1.amazonaws.com/umbrella-static/top-1m.csv.zip', 'umbrella.zip'),
+    'openpagerank': ('https://openpagerank.keywordseverywhere.com/downloads/top10milliondomains.csv.zip', 'openpagerank.zip'),
+}
+
+
+def source_names(value):
+    names = list(SOURCES) if value == 'all' else list(dict.fromkeys(value.split(',')))
+    if not names or any(name not in SOURCES for name in names):
+        raise argparse.ArgumentTypeError('Use all or comma-separated tranco,majestic,umbrella,openpagerank')
+    return names
+
+
+def parse_rows(rows):
+    column = None
+    for row in rows:
         if not row:
             continue
-        candidate = row[1] if len(row) >= 2 and row[0].strip().isdigit() else row[0]
-        domain = clean_domain(candidate)
-        if domain:
-            yield domain
+        labels = [cell.strip().lower().lstrip('\ufeff') for cell in row]
+        if 'domain' in labels:
+            column = labels.index('domain')
+            continue
+        index = column if column is not None else (1 if len(row) >= 2 and row[0].strip().isdigit() else 0)
+        if index < len(row):
+            domain = clean_domain(row[index])
+            if domain and '.' in domain:
+                yield domain
+
+
+def iter_rows(content):
+    yield from parse_rows(csv.reader(io.StringIO(content)))
 
 
 def read_source(path):
@@ -72,45 +95,59 @@ def read_source(path):
             if not members:
                 raise ValueError('ZIP needs a .csv or .txt domain list')
             with archive.open(members[0]) as raw:
-                text = io.TextIOWrapper(raw, encoding='utf-8-sig', errors='replace')
-                # Stream to avoid keeping the whole file in memory.
-                for row in csv.reader(text):
-                    if not row:
-                        continue
-                    entry = row[1] if len(row) >= 2 and row[0].strip().isdigit() else row[0]
-                    domain = clean_domain(entry)
-                    if domain:
-                        yield domain
+                yield from parse_rows(csv.reader(io.TextIOWrapper(raw, encoding='utf-8-sig', errors='replace')))
     else:
-        with path.open('r', encoding='utf-8-sig', errors='replace') as raw:
-            for row in csv.reader(raw):
-                if not row:
-                    continue
-                entry = row[1] if len(row) >= 2 and row[0].strip().isdigit() else row[0]
-                domain = clean_domain(entry)
-                if domain:
-                    yield domain
+        with path.open(encoding='utf-8-sig', errors='replace') as raw:
+            yield from parse_rows(csv.reader(raw))
 
 
-def get_default_source(refresh):
-    if CACHE.exists() and not refresh:
-        print(f'Using saved Tranco list: {CACHE}')
-        return CACHE
-    print('Downloading public Tranco list (one million domains)...', flush=True)
-    req = urllib.request.Request(TRANCO_URL, headers={'User-Agent': 'random-suffix-sites/1.0'})
-    CACHE.parent.mkdir(parents=True, exist_ok=True)
-    temporary = CACHE.with_suffix('.download')
+def download_source(name, refresh=False):
+    import tempfile
+    url, filename = SOURCES[name]
+    path = CACHE.parent / filename
+    if path.exists() and not refresh:
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    print(f'Downloading {name}...', flush=True)
+    request = urllib.request.Request(url, headers={'User-Agent': 'SQLD/2.0'})
+    # Preserve the format extension so the same parser validates downloads.
+    with tempfile.NamedTemporaryFile(dir=path.parent, suffix=path.suffix, delete=False) as tmp:
+        temporary = Path(tmp.name)
     try:
-        with urllib.request.urlopen(req, timeout=90) as response, temporary.open('wb') as output:
+        with urllib.request.urlopen(request, timeout=45) as response, temporary.open('wb') as output:
             import shutil
             shutil.copyfileobj(response, output)
-        with zipfile.ZipFile(temporary) as z:
-            if z.testzip() is not None:
-                raise ValueError('Downloaded archive is corrupt')
-        temporary.replace(CACHE)
+        # Reject HTML/error pages and empty lists before replacing a valid cache.
+        if next(read_source(temporary), None) is None:
+            raise ValueError(f'{name} did not return a domain list')
+        if path.suffix == '.zip':
+            with zipfile.ZipFile(temporary) as archive:
+                if archive.testzip() is not None:
+                    raise ValueError(f'{name} archive is corrupt')
+        temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
-    return CACHE
+    return path
+
+
+def collect_sources(names, suffix, refresh=False):
+    matching, reports = set(), []
+    for name in names:
+        report = {'name': name, 'url': SOURCES[name][0]}
+        try:
+            path = download_source(name, refresh)
+            found = {d for d in read_source(path) if d.endswith('.' + suffix)}
+            added = len(found - matching)
+            matching.update(found)
+            report.update(status='ok', matching=len(found), added_unique=added, cache=str(path))
+            print(f'{name}: {len(found)} matching; {added} new unique domains', flush=True)
+        except (OSError, urllib.error.URLError, zipfile.BadZipFile, ValueError, csv.Error) as exc:
+            report.update(status='failed', error=str(exc))
+            print(f'Warning: {name} failed: {exc}', file=sys.stderr, flush=True)
+        reports.append(report)
+    if not any(r['status'] == 'ok' for r in reports):
+        raise ValueError('All sources failed; check your connection or use --input with a local list')
+    return matching, reports
 
 
 def main(argv=None):
@@ -118,6 +155,7 @@ def main(argv=None):
     p.add_argument('--suffix', type=valid_suffix, help='.ae / .sa / .co.uk')
     p.add_argument('--count', '--limit', type=int, help='How many domains to sample (default 1000)')
     p.add_argument('--input', type=Path, help='Optional local .txt, .csv, or .zip domain list')
+    p.add_argument('--sources', type=source_names, default=list(SOURCES), help='all (default) or comma-separated source names')
     p.add_argument('--refresh', action='store_true', help='Re-download Tranco list')
     p.add_argument('--output', type=Path, help='Optional new output directory')
     args = p.parse_args(argv)
@@ -133,13 +171,13 @@ def main(argv=None):
     if not 1 <= args.count <= 100000:
         p.error('--count must be between 1 and 100000')
     try:
-        src = args.input or get_default_source(args.refresh)
-        if not src.is_file():
-            p.error(f'Input file does not exist: {src}')
-        matching = set()
-        for domain in read_source(src):
-            if domain.endswith('.' + args.suffix):
-                matching.add(domain)
+        if args.output and args.output.exists():
+            raise ValueError('Output directory already exists; choose a new path')
+        if args.input:
+            matching = {d for d in read_source(args.input) if d.endswith('.' + args.suffix)}
+            reports = [{'name': 'local', 'status': 'ok', 'path': str(args.input), 'matching': len(matching)}]
+        else:
+            matching, reports = collect_sources(args.sources, args.suffix, args.refresh)
         pool = sorted(matching)
         selected = secrets.SystemRandom().sample(pool, k=min(args.count, len(pool)))
         now = datetime.now(timezone.utc)
@@ -153,8 +191,9 @@ def main(argv=None):
             'requested': args.count,
             'available_matching_domains': len(pool),
             'returned': len(selected),
-            'source': str(src),
-            'source_reference': TRANCO_URL if not args.input else None,
+            'source': str(args.input) if args.input else 'public domain lists',
+            'sources': reports,
+            'partial_results': any(r['status'] == 'failed' for r in reports),
             'created_utc': now.isoformat(),
             'note': 'Random from source, not all Internet domains. No reachability or vulnerability testing performed.',
         }
