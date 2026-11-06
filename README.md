@@ -1,4 +1,47 @@
-# SQLD
+# SQLD — random sites by domain suffix
+
+Extract a random sample of known domains ending in a suffix such as `.ae`, `.sa`, or `.co.uk`. The default mode uses the public Tranco top-one-million list: **no AWS account, API keys, pip dependencies, or target requests**. Python 3.10+.
+
+## Quick start
+
+```bash
+git clone https://github.com/rqtnn/SQLD.git
+cd SQLD
+python3 sqld.py
+```
+
+Enter the suffix and the count when prompted. Or provide both directly:
+
+```bash
+python3 sqld.py --suffix .ae --count 1000
+python3 sqld.py --suffix .co.uk --count 500 --refresh
+python3 sqld.py --suffix .sa --count 1000 --input my-domains.txt
+```
+
+`--limit` is an alias for `--count`. Random mode accepts 1–100000.
+The standalone attached-script entry point is also available:
+
+```bash
+python3 random_suffix_sites.py --suffix .ae --count 1000
+```
+
+The default list is downloaded once from https://tranco-list.eu/top-1m.csv.zip and cached in `~/.cache/random-suffix-sites/`. Use `--refresh` to download it again. A local `--input` works offline and accepts TXT, rank/domain CSV, or ZIP containing TXT/CSV. URL inputs are reduced to hostnames. Matching respects label boundaries, removes duplicates, and samples without replacement.
+
+Results are saved in a new `results/suffix-*` folder:
+
+- `domains.txt`: sampled domains
+- `urls.txt`: the same domains formatted with `https://`
+- `summary.json`: requested, available, and returned counts plus source and timestamp
+
+Use `--output NEW_DIRECTORY` for a custom location. Existing output directories are never overwritten.
+
+**Coverage:** this is a sample from the supplied list, not an index of all registered domains. If only 200 matching domains exist in the list, requesting 1000 returns 200. Domains are not checked for reachability, PHP, query parameters, or vulnerabilities; HTTPS is formatting only. A suffix does not prove a site's location.
+
+## Existing Common Crawl mode
+
+The original archived-URL workflow remains available using `--source commoncrawl`. Its AWS dependencies and setup only apply to this mode.
+
+#### Archived URL discovery
 
 Search Common Crawl for archived PHP pages with GET query parameters by hostname suffix, such as `.ae`, `.sa`, or `.co.uk`. For example, selecting `.ae` finds patterns such as `https://shop.example.ae/item.php?id=123` or `https://blog.example.ae/search.php?q=hello`. Default: 1,000 different hostnames; maximum: 10,000. One URL is saved per hostname. Subdomains count separately.
 
@@ -8,18 +51,18 @@ Automatic search uses AWS Athena and requires the one-time setup below. Running 
 
 SQLD prepares candidates for manual review. Query parameters do not establish SQL injection, a database, or current availability. SQLD does not contact target websites, send attack payloads, or scan vulnerabilities. Only scan assets you own or have permission to test. A suffix does not establish a website's country or hosting location.
 
-## Quick start (Python 3.10+)
+### Quick start (Python 3.10+)
 
 No dependencies or accounts needed for a local file:
 
 ```bash
-python3 sqld.py --input example-urls.txt
+python3 sqld.py --source commoncrawl --input example-urls.txt
 ```
 
 Enter `.ae`, then press Enter for 1,000. The included fictional sample returns only two eligible hostnames. SQLD never invents entries to meet the count.
 
 ```bash
-python3 sqld.py --suffix .sa --limit 1000 --input my-urls.txt
+python3 sqld.py --source commoncrawl --suffix .sa --limit 1000 --input my-urls.txt
 ```
 
 Input accepts one URL per line or JSONL objects containing `url`. Filters exclude tracking-only queries, common static files, embedded credentials, and query field names suggesting secrets or sessions. This is a best-effort filter, not a comprehensive secret detector. Fragments are removed; query values are preserved. Local files use their original order when choosing one URL per hostname.
@@ -33,7 +76,7 @@ Results go in a new timestamped `results/sqld-*` directory:
 
 Use `--output NEW_DIRECTORY` to choose the location. Existing directories are never overwritten.
 
-## Collect directly from Common Crawl
+### Collect directly from Common Crawl
 
 The bulk source is the Common Crawl URL Index through AWS Athena. The tool does not scrape search engines or use the CDX API to enumerate a whole suffix.
 
@@ -47,7 +90,7 @@ One-time setup:
 
 ```bash
 python3 -m pip install -r requirements.txt
-python3 sqld.py --suffix .ae --limit 1000 --crawl CC-MAIN-2025-33 --s3-output s3://YOUR-BUCKET/athena-results/ --profile YOUR-PROFILE
+python3 sqld.py --source commoncrawl --suffix .ae --limit 1000 --crawl CC-MAIN-2025-33 --s3-output s3://YOUR-BUCKET/athena-results/ --profile YOUR-PROFILE
 ```
 
 Omit `--suffix` and `--limit` for interactive prompts. Use `--database`, `--table`, or `--workgroup` for custom settings. Queries time out after 600 seconds by default (`--timeout` changes this); interruption and polling failures request cancellation. Check the printed query ID in AWS if cancellation fails.
@@ -55,12 +98,12 @@ Omit `--suffix` and `--limit` for interactive prompts. Use `--database`, `--tabl
 Preview the exact SQL without contacting AWS or installing boto3:
 
 ```bash
-python3 sqld.py --suffix .ae --limit 1000 --crawl CC-MAIN-2025-33 --print-query
+python3 sqld.py --source commoncrawl --suffix .ae --limit 1000 --crawl CC-MAIN-2025-33 --print-query
 ```
 
 SQL requests at most three archived URLs per hostname and up to nine times the requested URL count before local filtering. It may return fewer eligible hostnames than requested, especially if sampled URLs are filtered out. No retry queries run automatically. Archive fetch status 200 describes the time of archival, not the live website today. No vulnerability ranking or probability is assigned.
 
-## Tests
+### Tests
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -68,7 +111,7 @@ python3 -m unittest discover -s tests -v
 
 Tests use fictional URLs and mocked Athena responses. Live AWS collection is not tested during development.
 
-## Official setup references
+### Official setup references
 
 - [Common Crawl URL Index and Athena setup](https://commoncrawl.org/url-index)
 - [Official flat table schema](https://github.com/commoncrawl/cc-index-table/blob/master/src/sql/athena/cc-index-create-table-flat.sql)
