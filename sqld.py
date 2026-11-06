@@ -155,8 +155,11 @@ def save(items, output, suffix, limit, source, page_type='any'):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source', choices=['random', 'commoncrawl'], default='random',
+        help='random: sample domains without AWS (default); commoncrawl: archived URL candidates')
+    parser.add_argument('--refresh', action='store_true', help='Refresh the cached Tranco domain list')
     parser.add_argument('--suffix', help='.ae, .sa, .co.uk, etc.')
-    parser.add_argument('--limit', type=int, help='1–10000; interactive default: 1000')
+    parser.add_argument('--limit', '--count', type=int, help='Interactive default: 1000; random max: 100000; commoncrawl max: 10000')
     parser.add_argument('--input', type=Path, help='Local URL list or JSONL with a url field')
     parser.add_argument('--page-type', choices=['php', 'any'], default='php',
         help='php: pages such as item.php?id=1 (default); any: all page paths with GET parameters')
@@ -171,6 +174,20 @@ def main():
     parser.add_argument('--timeout', type=int, default=600)
     parser.add_argument('--output', type=Path, help='New directory; existing directories are never overwritten')
     args = parser.parse_args()
+    if args.source == 'random':
+        if args.crawl or args.print_query or args.s3_output or args.profile:
+            parser.error('AWS/query options require --source commoncrawl')
+        from random_suffix_sites import main as random_main
+        random_args = []
+        for flag, value in [('--suffix', args.suffix), ('--count', args.limit),
+                            ('--input', args.input), ('--output', args.output)]:
+            if value is not None:
+                random_args.extend([flag, str(value)])
+        if args.refresh:
+            random_args.append('--refresh')
+        return random_main(random_args)
+    if args.refresh:
+        parser.error('--refresh is only available with --source random')
     try:
         suffix = suffix_value(args.suffix or input('Suffix (.ae / .sa): '))
         limit = limit_value(args.limit if args.limit is not None else (input('Unique hostnames [1000]: ') or '1000'))
